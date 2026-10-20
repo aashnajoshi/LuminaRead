@@ -2,3 +2,5 @@ PyMuPDF
 edge-tts
 pydub
 tqdm
+Pillow
+rapidocr-onnxruntime

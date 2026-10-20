@@ -1,8 +1,6 @@
-# -----------------------------
-# TTS
-# -----------------------------
-
-VOICE = "en-US-AriaNeural"
+# --------------- TTS ---------------
+# - "en-US-BrianNeural" (Male) & "en-US-AvaNeural" (Female)
+VOICE = "en-US-BrianNeural"
 MAX_TTS_CHARS = 3000
 SPEECH_RATE = "+0%"
 SPEECH_VOLUME = "+0%"
@@ -14,10 +12,7 @@ MAX_CONCURRENT_REQUESTS = 4
 # Set to a number while testing. Set to None for the complete book.
 MAX_SECTIONS = None
 
-# -----------------------------
-# OUTPUT
-# -----------------------------
-
+# --------------- Output ---------------
 OUTPUT_EXTENSION = ".mp4"
 AUDIO_BITRATE = "320k"
 
@@ -27,35 +22,34 @@ AUTO_OPEN_AUDIO = False
 # None = same folder as selected PDF. Otherwise specify the desired output directory.
 OUTPUT_DIRECTORY = None
 
-# -----------------------------
-# SUBTITLES
-# -----------------------------
-
+# --------------- Subtitles ---------------
 SUBTITLE_FORMAT = "mov_text"
+MAX_SUBTITLE_CHARS = 45
+MAX_SUBTITLE_DURATION_MS = 4000
 
 # True  = embed timed captions in the MP4; False = normal audiobook without captions.
 ENABLE_SUBTITLES = True
 
 # Natural phrase constraints for dialogue-synchronized subtitles
 MAX_SUBTITLE_WORDS = 8
-MAX_SUBTITLE_CHARS = 45
-MAX_SUBTITLE_DURATION_MS = 4000
 
-# -----------------------------
-# PDF
-# -----------------------------
+# --------------- Images & Visual Slides --------------- 
+ENABLE_IMAGE_EXTRACTION = True
+MIN_IMAGE_WIDTH = 100
+MIN_IMAGE_HEIGHT = 100
+MAX_IMAGE_ASPECT_RATIO = 5.0
+ENABLE_IMAGE_OCR = True
+SLIDE_WIDTH = 1280
+SLIDE_HEIGHT = 720
 
-# Reserved for future OCR implementation.
+# --------------- PDF ---------------
 ENABLE_OCR_FALLBACK = True
 OCR_LANGUAGE = "eng"
 MIN_TEXT_CHARS = 40
 USE_PDF_TOC = True
 VALIDATE_TOC = True
 
-# -----------------------------
-# Section filtering
-# -----------------------------
-
+# --------------- Section Filtering ---------------
 EXCLUDED_SECTIONS = {
     "contents",
     "table of contents",
@@ -82,9 +76,6 @@ EXCLUDED_SECTION_PREFIXES = {
 
 IGNORED_TEXT = {"oceanpdf.com",}
 
-# -----------------------------
-# Debugging
-# -----------------------------
-
+# --------------- Debugging ---------------
 # False = remove temporary individual TTS files; True  = keep them for debugging.
 KEEP_TTS_SEGMENTS = False

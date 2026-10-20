@@ -1,5 +1,5 @@
 from pathlib import Path
-from tkinter import Tk, filedialog
+import sys
 from tqdm import tqdm
 
 def show_banner():
@@ -10,16 +10,27 @@ def show_banner():
     print()
 
 def select_pdf() -> Path | None:
-    root = Tk()
-    root.withdraw()
-    file_path = filedialog.askopenfilename(
-        title="Select the PDF",
-        filetypes=[("PDF files", "*.pdf")],
-    )
-    root.destroy()
-    if not file_path:
+    if len(sys.argv) > 1:
+        arg_path = Path(sys.argv[1])
+        if arg_path.exists() and arg_path.suffix.lower() == ".pdf":
+            return arg_path
+        if arg_path.exists():
+            return arg_path
+
+    try:
+        from tkinter import Tk, filedialog
+        root = Tk()
+        root.withdraw()
+        file_path = filedialog.askopenfilename(
+            title="Select the PDF",
+            filetypes=[("PDF files", "*.pdf")],
+        )
+        root.destroy()
+        if not file_path:
+            return None
+        return Path(file_path)
+    except Exception:
         return None
-    return Path(file_path)
 
 def show_selected_file(filename: str):
     print(f"Selected PDF: {filename}\n")
@@ -30,10 +41,14 @@ def show_step_start(step_num: int, total_steps: int, title: str):
 def show_step_done(step_num: int, total_steps: int, title: str):
     print(f"[Step {step_num}/{total_steps}] {title}... [Done]\n")
 
-def show_book_metadata(title: str, author: str, section_count: int):
+def show_book_metadata(title: str, author: str, section_count: int, image_count: int = 0):
     print(f"  Title: {title}")
     print(f"  Author: {author}")
     print(f"  Narrative Sections: {section_count}")
+    if image_count > 0:
+        print(f"  Visual Diagrams/Images: {image_count} detected (OCR & paragraph sync enabled)")
+    else:
+        print("  Visual Diagrams/Images: None (Standard visual canvas)")
 
 def show_warning(message: str):
     print(f"\n{message}\n")
@@ -41,7 +56,7 @@ def show_warning(message: str):
 def show_error(message: str):
     print(f"\nERROR: {message}\n")
 
-def show_completion(output_path: Path, duration_minutes: float, bitrate: str, subtitles_enabled: bool):
+def show_completion(output_path: Path, duration_minutes: float, bitrate: str, subtitles_enabled: bool, slides_count: int = 0):
     print("=" * 60)
     print("AUDIOBOOK COMPLETE")
     print("=" * 60)
@@ -53,6 +68,10 @@ def show_completion(output_path: Path, duration_minutes: float, bitrate: str, su
         print("Subtitles: Enabled (Toggleable in media player CC menu)")
     else:
         print("Subtitles: Disabled")
+    if slides_count > 0:
+        print(f"Visual Slides: {slides_count} slides synchronized to chapters & paragraphs")
+    else:
+        print("Visual Slides: Standard canvas")
     print()
 
 class NarrationProgress:

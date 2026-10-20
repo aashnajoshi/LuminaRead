@@ -1,6 +1,6 @@
 import asyncio
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from config import KEEP_TTS_SEGMENTS, MAX_CONCURRENT_REQUESTS
 from pdf_processor import Section
@@ -11,23 +11,16 @@ from text_processor import (
     create_heading_cue,
     group_words_into_subtitle_cues,
     interpret_text,
-    split_text_for_tts,
-)
+    split_text_for_tts,)
 
 @dataclass
 class SectionAudioResult:
     audio_path: Path
     duration_ms: int
     subtitle_cues: list[SubtitleCue]
+    chunk_durations_ms: list[int] = field(default_factory=list)
 
-async def generate_section_audio(
-    section: Section,
-    section_number: int,
-    temp_directory: Path,
-    chunks: list[str] | None = None,
-    semaphore: asyncio.Semaphore | None = None,
-    on_progress: Callable[[int, int, str], None] | None = None,
-) -> SectionAudioResult | None:
+async def generate_section_audio(section: Section, section_number: int, temp_directory: Path, chunks: list[str] | None = None, semaphore: asyncio.Semaphore | None = None, on_progress: Callable[[int, int, str], None] | None = None,) -> SectionAudioResult | None:
     if chunks is None:
         chunks = split_text_for_tts(section.text)
 
@@ -62,6 +55,7 @@ async def generate_section_audio(
     # --------------- 3. Assemble audio segments & subtitle cues in strict chronological order ---------------
     ordered_audio_files: list[Path] = []
     subtitle_cues: list[SubtitleCue] = []
+    chunk_durations_ms: list[int] = []
     current_time_ms = 0
     heading_dur = get_audio_duration_ms(heading_path)
     ordered_audio_files.append(heading_path)
@@ -81,6 +75,7 @@ async def generate_section_audio(
         metadata = item["metadata"]
         text = item["text"]
         temporary_files.append(chunk_path)
+        chunk_start_before_pause = current_time_ms
         if cue.pause_before_ms:
             silence = get_or_create_silence(temp_directory, cue.pause_before_ms)
             ordered_audio_files.append(silence)
@@ -99,6 +94,8 @@ async def generate_section_audio(
             silence = get_or_create_silence(temp_directory, cue.pause_after_ms)
             ordered_audio_files.append(silence)
             current_time_ms += cue.pause_after_ms
+
+        chunk_durations_ms.append(current_time_ms - chunk_start_before_pause)
 
     # --------------- 4. Fast lossless concatenation using FFmpeg ---------------
     section_path = temp_directory / f"section_{section_number:03d}.mp3"
@@ -120,4 +117,4 @@ async def generate_section_audio(
             except OSError:
                 pass
 
-    return SectionAudioResult(audio_path=section_path, duration_ms=current_time_ms, subtitle_cues=subtitle_cues,)
+    return SectionAudioResult(audio_path=section_path, duration_ms=current_time_ms, subtitle_cues=subtitle_cues, chunk_durations_ms=chunk_durations_ms,)
