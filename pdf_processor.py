@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from pathlib import Path
+import re
 import pymupdf as fitz
-
 from config import (
     EXCLUDED_SECTION_PREFIXES,
     EXCLUDED_SECTIONS,
@@ -53,7 +53,6 @@ def extract_all_page_text(pdf) -> list[str]:
 def detect_repeated_edge_text(page_texts):
     first_lines = {}
     last_lines = {}
-
     for text in page_texts:
         lines = [line.strip() for line in text.splitlines() if line.strip()]
         if not lines:
@@ -209,43 +208,78 @@ def extract_section_text(page_texts, start_page, end_page, repeated_first, repea
 
     return clean_text("\n".join(cleaned_pages))
 
+def strip_leading_title(text: str, title: str) -> str:
+    #  Prevents duplicate spoken narration if the page text begins with the chapter title or numeral (e.g. 'I', 'Chapter 1').
+    norm_title = re.escape(title.strip())
+    match = re.match(rf"^(?:{norm_title}|chapter\s+[0-9ivxlcdm]+|[0-9ivxlcdm]+)[\s.:\-–—]*", text, re.IGNORECASE,)
+    if match:
+        remainder = text[match.end():].strip()
+        if len(remainder) >= MIN_TEXT_CHARS:
+            return remainder
+    
+    return text
+
+def detect_chapters_from_content(page_texts: list[str]) -> list[dict]:
+    # Intelligent heuristic detection for chapters using page text patterns, whitespace isolation, and common book headings (Chapter, Act, Part, Roman Numerals).
+    entries = []
+    chapter_pattern = re.compile(r"^\s*(?:chapter\s+([0-9ivxlcdm]+|[a-z]+)|part\s+([0-9ivxlcdm]+|[a-z]+)|act\s+([0-9ivxlcdm]+)|prologue|epilogue|book\s+([0-9ivxlcdm]+))\b[:.\s]*(.*?)$", re.IGNORECASE,)
+    roman_pattern = re.compile(r"^\s*([ivxlcdm]{1,8})\s*$", re.IGNORECASE)
+    for page_idx, page_text in enumerate(page_texts, start=1):
+        lines = [line.strip() for line in page_text.splitlines() if line.strip()]
+        if not lines:
+            continue
+
+        header_candidate = None
+        for line in lines[:3]:
+            if chapter_pattern.match(line) or roman_pattern.match(line):
+                header_candidate = line
+                break
+
+        if header_candidate:
+            clean_cand = " ".join(header_candidate.split())
+            if not is_excluded_section(clean_cand):
+                entries.append({"title": clean_cand, "page": page_idx})
+
+    # If no chapters detected, group pages into logical segments
+    if not entries:
+        chunk_size = 15
+        total_pages = len(page_texts)
+        if total_pages <= chunk_size:
+            entries.append({"title": "Main Content", "page": 1})
+        
+        else:
+            for page_num in range(1, total_pages + 1, chunk_size):
+                part_num = (page_num // chunk_size) + 1
+                entries.append({"title": f"Section {part_num}", "page": page_num})
+
+    return entries
+
 def process_pdf(pdf_path: Path):
     pdf = fitz.open(pdf_path)
     try:
-        title, author = get_metadata(pdf, pdf_path,)
+        title, author = get_metadata(pdf, pdf_path)
         page_texts = extract_all_page_text(pdf)
-        repeated_first, repeated_last = (detect_repeated_edge_text(page_texts))
+        repeated_first, repeated_last = detect_repeated_edge_text(page_texts)
+        toc_entries = []
         if USE_PDF_TOC:
             toc_entries = get_top_level_toc(pdf)
-            toc_entries = validate_toc_entries(toc_entries, page_texts,)
+            toc_entries = validate_toc_entries(toc_entries, page_texts)
 
-        else:
-            toc_entries = []
-
+        # Intelligent fallback if no usable TOC found in PDF
         if not toc_entries:
-            raise RuntimeError("No usable top-level PDF table of contents was found.")
+            toc_entries = detect_chapters_from_content(page_texts)
 
-        raw_sections = choose_narrative_sections(toc_entries, page_texts,)
+        raw_sections = choose_narrative_sections(toc_entries, page_texts)
         sections = []
         for item in raw_sections:
-            text = extract_section_text(
-                page_texts=page_texts,
-                start_page=item["start_page"],
-                end_page=item["end_page"],
-                repeated_first=repeated_first,
-                repeated_last=repeated_last,)
-
+            text = extract_section_text(page_texts=page_texts, start_page=item["start_page"], end_page=item["end_page"], repeated_first=repeated_first, repeated_last=repeated_last,)
             if not text:
                 continue
 
-            sections.append(
-                Section(
-                    title=item["title"],
-                    start_page=item["start_page"],
-                    end_page=item["end_page"],
-                    text=text,))
+            # Strip leading title or numeral duplication from narrative text
+            cleaned_section_text = strip_leading_title(text, item["title"])
+            sections.append(Section(title=item["title"], start_page=item["start_page"], end_page=item["end_page"], text=cleaned_section_text,))
 
         return title, author, sections
 
-    finally:
-        pdf.close()
+    finally: pdf.close()

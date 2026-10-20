@@ -13,10 +13,10 @@ A Python-based PDF to audiobook converter using Microsoft Edge neural TTS.
 - Sentence-aware TTS chunking
 - Chapter titles spoken separately
 - Pause after chapter titles
-- M4B/AAC output
+- High-bitrate AAC MP4 output with black canvas
 - Clickable chapter bookmarks
-- Optional timed subtitle track
-- Configurable voice
+- Dialogue-synchronized toggleable soft subtitles (CC)
+- Configurable voice and 320k audio bitrate
 - Configurable output directory
 - Test mode using a limited number of sections
 
@@ -26,6 +26,7 @@ A Python-based PDF to audiobook converter using Microsoft Edge neural TTS.
 Audiobook/
 │
 ├── main.py
+├── ui.py
 ├── config.py
 ├── pdf_processor.py
 ├── text_processor.py
@@ -34,3 +35,4 @@ Audiobook/
 ├── audiobook.py
 ├── requirements.txt
 └── README.md
+```

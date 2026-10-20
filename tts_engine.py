@@ -44,13 +44,7 @@ async def synthesize_cue(cue: NarrationCue, output_path: Path,):
     last_error = None
     for attempt in range(1, MAX_RETRIES + 1,):
         try:
-            communicate = edge_tts.Communicate(
-                text=cue.text,
-                voice=VOICE,
-                rate=rate,
-                volume=volume,
-                pitch=pitch,
-                boundary="SentenceBoundary",)
+            communicate = edge_tts.Communicate(text=cue.text, voice=VOICE, rate=rate, volume=volume, pitch=pitch, boundary="WordBoundary",)
             audio_data = bytearray()
             boundaries = []
             async for message in communicate.stream():
@@ -60,39 +54,19 @@ async def synthesize_cue(cue: NarrationCue, output_path: Path,):
                     if data:
                         audio_data.extend(data)
 
-                elif (message_type == "SentenceBoundary"):
-                    offset = message.get("offset", 0,)
-                    duration = message.get("duration", 0,)
-                    text = message.get("text", "",)
-                    boundaries.append({
-                        "offset_ms": (offset / TICKS_PER_SECOND * 1000),
-                        "duration_ms": (duration / TICKS_PER_SECOND * 1000),
-                        "text": text,
-                    })
+                elif message_type == "WordBoundary":
+                    offset = message.get("offset", 0)
+                    duration = message.get("duration", 0)
+                    text = message.get("text", "")
+                    boundaries.append({"offset_ms": (offset / TICKS_PER_SECOND * 1000), "duration_ms": (duration / TICKS_PER_SECOND * 1000), "text": text,})
 
             if not audio_data:
                 raise RuntimeError("Edge TTS returned no audio.")
 
             output_path.write_bytes(bytes(audio_data))
-            metadata = {
-                "text": cue.text,
-                "voice": VOICE,
-                "rate": rate,
-                "pitch": pitch,
-                "volume": volume,
-                "boundaries": boundaries,
-            }
-
+            metadata = {"text": cue.text, "voice": VOICE, "rate": rate, "pitch": pitch, "volume": volume, "boundaries": boundaries,}
             metadata_path = cache_path_for(output_path)
-            metadata_path.write_text(
-                json.dumps(
-                    metadata,
-                    ensure_ascii=False,
-                    indent=2,
-                ),
-                encoding="utf-8",
-            )
-
+            metadata_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2,),encoding="utf-8",)
             return metadata
 
         except Exception as error:
