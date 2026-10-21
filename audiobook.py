@@ -166,6 +166,10 @@ def create_mp4(combined_audio_path: Path, output_path: Path, metadata_path: Path
         "-metadata", f"title={title}",
         "-metadata", f"artist={author}",
         "-metadata", f"album={title}",
+        "-metadata", "genre=Audiobook",
+        "-metadata", "media_type=2",
+        "-metadata", "show_movement=1",
+        "-metadata", "gapless_playback=1",
     ])
     if total_duration_ms is not None and total_duration_ms > 0:
         duration_sec = total_duration_ms / 1000.0
