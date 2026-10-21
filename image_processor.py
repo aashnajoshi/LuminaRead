@@ -3,15 +3,7 @@ from pathlib import Path
 from typing import Any
 import pymupdf as fitz
 from PIL import Image
-from config import (
-    ENABLE_IMAGE_EXTRACTION,
-    ENABLE_IMAGE_OCR,
-    MAX_IMAGE_ASPECT_RATIO,
-    MIN_IMAGE_HEIGHT,
-    MIN_IMAGE_WIDTH,
-    SLIDE_HEIGHT,
-    SLIDE_WIDTH,
-)
+import config
 
 _ocr_engine = None
 
@@ -42,32 +34,36 @@ class SlideSegment:
     image_path: Path
     duration_seconds: float
 
-def create_blank_canvas(output_path: Path, width: int = SLIDE_WIDTH, height: int = SLIDE_HEIGHT) -> Path:
+def create_blank_canvas(output_path: Path, width: int | None = None, height: int | None = None) -> Path:
+    w = width or config.SLIDE_WIDTH
+    h = height or config.SLIDE_HEIGHT
     if not output_path.exists():
-        canvas = Image.new("RGB", (width, height), color=(0, 0, 0))
+        canvas = Image.new("RGB", (w, h), color=(0, 0, 0))
         canvas.save(output_path, "PNG")
 
     return output_path
 
-def format_slide_image(raw_img_path: Path, output_path: Path, width: int = SLIDE_WIDTH, height: int = SLIDE_HEIGHT, subtitle_margin_bottom: int = 120,) -> Path:
+def format_slide_image(raw_img_path: Path, output_path: Path, width: int | None = None, height: int | None = None, subtitle_margin_bottom: int = 120,) -> Path:
+    w = width or config.SLIDE_WIDTH
+    h = height or config.SLIDE_HEIGHT
     with Image.open(raw_img_path) as img:
         img = img.convert("RGB")
-        max_w = width - 80
-        max_h = height - subtitle_margin_bottom - 40
+        max_w = w - 80
+        max_h = h - subtitle_margin_bottom - 40
         img_w, img_h = img.size
         scale = min(max_w / img_w, max_h / img_h)
         new_w = max(1, int(img_w * scale))
         new_h = max(1, int(img_h * scale))
         resized = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
-        canvas = Image.new("RGB", (width, height), color=(0, 0, 0))
-        pos_x = (width - new_w) // 2
-        pos_y = max(20, (height - subtitle_margin_bottom - new_h) // 2 + 10)
+        canvas = Image.new("RGB", (w, h), color=(0, 0, 0))
+        pos_x = (w - new_w) // 2
+        pos_y = max(20, (h - subtitle_margin_bottom - new_h) // 2 + 10)
         canvas.paste(resized, (pos_x, pos_y))
         canvas.save(output_path, "PNG")
         return output_path
 
 def run_image_ocr(image_path: Path) -> str:
-    if not ENABLE_IMAGE_OCR:
+    if not config.ENABLE_IMAGE_OCR:
         return ""
 
     engine = _get_ocr_engine()
@@ -86,7 +82,7 @@ def run_image_ocr(image_path: Path) -> str:
         return ""
 
 def extract_images_from_pdf(pdf_path: Path, temp_directory: Path) -> list[ExtractedImage]:
-    if not ENABLE_IMAGE_EXTRACTION:
+    if not config.ENABLE_IMAGE_EXTRACTION:
         return []
 
     doc = fitz.open(pdf_path)
@@ -126,11 +122,11 @@ def extract_images_from_pdf(pdf_path: Path, temp_directory: Path) -> list[Extrac
 
                 orig_w = pix.width
                 orig_h = pix.height
-                if orig_w < MIN_IMAGE_WIDTH or orig_h < MIN_IMAGE_HEIGHT:
+                if orig_w < config.MIN_IMAGE_WIDTH or orig_h < config.MIN_IMAGE_HEIGHT:
                     continue
 
                 aspect_ratio = max(orig_w / max(1, orig_h), orig_h / max(1, orig_w))
-                if aspect_ratio > MAX_IMAGE_ASPECT_RATIO:
+                if aspect_ratio > config.MAX_IMAGE_ASPECT_RATIO:
                     continue
 
                 raw_filename = f"raw_p{page_number:04d}_{img_index:02d}_{xref}.png"
@@ -144,20 +140,26 @@ def extract_images_from_pdf(pdf_path: Path, temp_directory: Path) -> list[Extrac
                     pix.save(raw_path)
 
                 rects = page.get_image_rects(xref)
+                is_full_page = False
                 if rects:
                     y0 = rects[0].y0
                     y1 = rects[0].y1
+                    if page.rect.width > 0 and page.rect.height > 0:
+                        w_pct = rects[0].width / page.rect.width
+                        h_pct = rects[0].height / page.rect.height
+                        if w_pct >= 0.85 and h_pct >= 0.85:
+                            is_full_page = True
 
                 else:
                     y0 = (page_height / max(1, len(image_list))) * img_index
                     y1 = y0 + 100.0
 
-                ocr_text = run_image_ocr(raw_path)
+                # Avoid duplicate OCR on full-page scans
+                ocr_text = "" if is_full_page else run_image_ocr(raw_path)
                 slide_filename = f"slide_p{page_number:04d}_{img_index:02d}_{xref}.png"
                 slide_path = slides_dir / slide_filename
                 format_slide_image(raw_path, slide_path)
-                extracted_images.append(
-                    ExtractedImage(image_path=slide_path, page_number=page_number, y0=y0, y1=y1, width=orig_w, height=orig_h, ocr_text=ocr_text,))
+                extracted_images.append(ExtractedImage(image_path=slide_path, page_number=page_number, y0=y0, y1=y1, width=orig_w, height=orig_h, ocr_text=ocr_text,))
 
         extracted_images.sort(key=lambda item: (item.page_number, item.y0))
         return extracted_images
@@ -168,6 +170,7 @@ def extract_images_from_pdf(pdf_path: Path, temp_directory: Path) -> list[Extrac
 def build_slide_timeline(sections: list[Any], section_durations_ms: list[int], section_chunk_durations_ms: list[list[int]], extracted_images: list[ExtractedImage], intro_duration_ms: int, temp_directory: Path,) -> list[SlideSegment]:
     blank_canvas = create_blank_canvas(temp_directory / "blank_canvas.png")
     timeline: list[SlideSegment] = []
+
     # --------------- 1. Introduction Slide ---------------
     intro_duration_sec = intro_duration_ms / 1000.0
     cover_image = None
@@ -188,17 +191,17 @@ def build_slide_timeline(sections: list[Any], section_durations_ms: list[int], s
 
         chunk_durations = [ms / 1000.0 for ms in section_chunk_durations_ms[sec_idx]]
         sec_images = [img for img in extracted_images if section.start_page <= img.page_number <= section.end_page]
-        # --------------- Case 0: No images in this section -> Blank canvas ---------------
+        # Case 0: No images in this section -> Blank canvas
         if not sec_images:
             timeline.append(SlideSegment(image_path=blank_canvas, duration_seconds=sec_duration_sec))
             continue
 
-        # --------------- Case 1: Exactly 1 image in chapter -> Display for entire chapter duration ---------------
+        # Case 1: Exactly 1 image in chapter -> Display for entire chapter duration
         if len(sec_images) == 1:
             timeline.append(SlideSegment(image_path=sec_images[0].image_path, duration_seconds=sec_duration_sec))
             continue
 
-        # --------------- Case 2: Multiple images -> Map to chunks/paragraphs ---------------
+        # Case 2: Multiple images -> Map to chunks/paragraphs
         num_chunks = len(chunk_durations)
         page_span = max(1, section.end_page - section.start_page + 1)
         chunk_start_times = [0.0]

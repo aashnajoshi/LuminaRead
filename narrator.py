@@ -4,14 +4,21 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from config import KEEP_TTS_SEGMENTS, MAX_CONCURRENT_REQUESTS
 from pdf_processor import Section
-from tts_engine import synthesize_cue
+from tts_engine import cache_path_for, synthesize_cue
 from audiobook import concat_audio_files, get_audio_duration_ms, get_or_create_silence
+
+from checkpoint_manager import (
+    save_section_checkpoint,
+    validate_cached_chunk,
+    validate_section_checkpoint,
+)
 from text_processor import (
     SubtitleCue,
     create_heading_cue,
     group_words_into_subtitle_cues,
     interpret_text,
-    split_text_for_tts,)
+    split_text_for_tts,
+)
 
 @dataclass
 class SectionAudioResult:
@@ -30,20 +37,44 @@ async def generate_section_audio(section: Section, section_number: int, temp_dir
     if semaphore is None:
         semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
 
-    # --------------- 1. Synthesize Heading ---------------
+    section_dir = temp_directory / f"section_{section_number:03d}"
+    section_dir.mkdir(parents=True, exist_ok=True)
+
+    # 1. Check if the entire section was already completed & checkpointed
+    cached_section = validate_section_checkpoint(section_dir, section_number, len(chunks))
+    if cached_section is not None:
+        if on_progress:
+            on_progress(0, len(chunks), "Heading (Cached)")
+            for i in range(1, len(chunks) + 1):
+                on_progress(i, len(chunks), f"Chunk {i}/{len(chunks)} (Cached)")
+
+        return cached_section
+
+    # 2. Synthesize Heading (cached if already valid)
     heading_cue = create_heading_cue(section.title)
-    heading_path = temp_directory / f"section_{section_number:03d}_heading.mp3"
+    heading_path = section_dir / "heading.mp3"
     await synthesize_cue(heading_cue, heading_path)
     if on_progress:
         on_progress(0, len(chunks), "Heading")
 
-    # --------------- 2. Synthesize all chunks concurrently ---------------
+    # 3. Synthesize all chunks concurrently (reusing any valid cached chunks)
     chunk_results: list[dict | None] = [None] * len(chunks)
     temporary_files = [heading_path]
+
     async def synthesize_worker(index: int, text: str):
+        chunk_path = section_dir / f"chunk_{index:04d}.mp3"
+        meta_path = cache_path_for(chunk_path)
+        cached_meta = validate_cached_chunk(chunk_path, meta_path, text)
+        if cached_meta is not None:
+            cue = interpret_text(text)
+            chunk_results[index - 1] = {"cue": cue, "path": chunk_path, "metadata": cached_meta, "text": text,}
+            if on_progress:
+                on_progress(index, len(chunks), f"Chunk {index}/{len(chunks)} (Cached)")
+
+            return
+
         async with semaphore:
             cue = interpret_text(text)
-            chunk_path = temp_directory / f"section_{section_number:03d}_chunk_{index:04d}.mp3"
             metadata = await synthesize_cue(cue, chunk_path)
             chunk_results[index - 1] = {"cue": cue, "path": chunk_path, "metadata": metadata, "text": text,}
             if on_progress:
@@ -52,7 +83,7 @@ async def generate_section_audio(section: Section, section_number: int, temp_dir
     tasks = [synthesize_worker(i, c) for i, c in enumerate(chunks, start=1)]
     await asyncio.gather(*tasks)
 
-    # --------------- 3. Assemble audio segments & subtitle cues in strict chronological order ---------------
+    # 4. Assemble audio segments & subtitle cues in strict chronological order
     ordered_audio_files: list[Path] = []
     subtitle_cues: list[SubtitleCue] = []
     chunk_durations_ms: list[int] = []
@@ -97,11 +128,15 @@ async def generate_section_audio(section: Section, section_number: int, temp_dir
 
         chunk_durations_ms.append(current_time_ms - chunk_start_before_pause)
 
-    # --------------- 4. Fast lossless concatenation using FFmpeg ---------------
-    section_path = temp_directory / f"section_{section_number:03d}.mp3"
+    # 5. Fast lossless concatenation using FFmpeg
+    section_path = section_dir / f"section_{section_number:03d}.mp3"
     concat_audio_files(ordered_audio_files, section_path)
+    result = SectionAudioResult(audio_path=section_path, duration_ms=current_time_ms, subtitle_cues=subtitle_cues, chunk_durations_ms=chunk_durations_ms,)
 
-    # --------------- 5. Cleanup temporary chunk files if configured ---------------
+    # 6. Save section-level checkpoint
+    save_section_checkpoint(section_dir, section_number, result)
+
+    # 7. Cleanup individual chunk audio files if configured
     if not KEEP_TTS_SEGMENTS:
         for file_path in temporary_files:
             try:
@@ -117,4 +152,4 @@ async def generate_section_audio(section: Section, section_number: int, temp_dir
             except OSError:
                 pass
 
-    return SectionAudioResult(audio_path=section_path, duration_ms=current_time_ms, subtitle_cues=subtitle_cues, chunk_durations_ms=chunk_durations_ms,)
+    return result

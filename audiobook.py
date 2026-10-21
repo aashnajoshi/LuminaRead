@@ -3,11 +3,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
-from config import (
-    AUDIO_BITRATE,
-    ENABLE_SUBTITLES,
-    SUBTITLE_FORMAT,
-)
+import config
 
 # --------------- System Checks & Helpers ---------------
 def check_ffmpeg():
@@ -18,10 +14,10 @@ def safe_filename(name: str) -> str:
     invalid = '<>:"/\\|?*'
     for character in invalid:
         name = name.replace(character, "_")
+
     return name.strip()
 
 def get_audio_duration_ms(file_path: Path) -> int:
-    # Retrieves the duration of an audio file in milliseconds using ffprobe without decoding uncompressed audio into RAM.
     check_ffmpeg()
     command = [
         "ffprobe", "-v", "error",
@@ -33,7 +29,6 @@ def get_audio_duration_ms(file_path: Path) -> int:
     return round(float(res.stdout.strip()) * 1000)
 
 def get_or_create_silence(temp_dir: Path, duration_ms: int = 600) -> Path:
-    # Generates a tiny silence MP3 matching Edge TTS format (24kHz mono) to insert between headings and sections without re-encoding.
     silence_path = temp_dir / f"silence_{duration_ms}ms.mp3"
     if silence_path.exists():
         return silence_path
@@ -55,7 +50,6 @@ def get_or_create_silence(temp_dir: Path, duration_ms: int = 600) -> Path:
     return silence_path
 
 def concat_audio_files(file_list: list[Path], output_path: Path):
-    # Losslessly concatenates audio files using the FFmpeg concat demuxer. Runs instantaneously with zero quality degradation and zero memory overhead.
     if not file_list:
         return
 
@@ -127,7 +121,6 @@ def create_mp4(combined_audio_path: Path, output_path: Path, metadata_path: Path
         "-nostats", "-loglevel", "error",
         "-progress", "pipe:1",
     ]
-    # Use slides manifest if provided; otherwise fallback to black canvas
     if slides_manifest_path is not None and slides_manifest_path.exists():
         command.extend(["-f", "concat", "-safe", "0", "-i", str(slides_manifest_path)])
 
@@ -138,7 +131,7 @@ def create_mp4(combined_audio_path: Path, output_path: Path, metadata_path: Path
         "-i", str(combined_audio_path),
         "-i", str(metadata_path),
     ])
-    if ENABLE_SUBTITLES and subtitle_path is not None:
+    if config.ENABLE_SUBTITLES and subtitle_path is not None:
         command.extend(["-i", str(subtitle_path)])
 
     command.extend([
@@ -152,15 +145,20 @@ def create_mp4(combined_audio_path: Path, output_path: Path, metadata_path: Path
         "-crf", "35",
         "-r", "1",
         "-c:a", "aac",
-        "-b:a", AUDIO_BITRATE,
+        "-b:a", config.AUDIO_BITRATE,
     ])
-    if ENABLE_SUBTITLES and subtitle_path is not None:
+    if config.ENABLE_SUBTITLES and subtitle_path is not None:
         command.extend([
             "-map", "3:0",
-            "-c:s", SUBTITLE_FORMAT,
+            "-c:s", config.SUBTITLE_FORMAT,
             "-metadata:s:s:0", "language=eng",
             "-metadata:s:s:0", "title=English",
         ])
+        if config.SUBTITLES_DEFAULT_ON:
+            command.extend(["-disposition:s:0", "default+forced"])
+
+        else:
+            command.extend(["-disposition:s:0", "0"])
 
     command.extend([
         "-metadata", f"title={title}",
@@ -178,7 +176,7 @@ def create_mp4(combined_audio_path: Path, output_path: Path, metadata_path: Path
     else:
         command.extend(["-shortest"])
 
-    command.extend(["-movflags", "+faststart", str(output_path),])
+    command.extend(["-movflags", "+faststart", str(output_path)])
     process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     time_regex = re.compile(r"out_time_us=(\d+)")
     last_seconds = 0.0
@@ -193,6 +191,7 @@ def create_mp4(combined_audio_path: Path, output_path: Path, metadata_path: Path
                     if diff > 0:
                         if on_progress:
                             on_progress(diff)
+
                         last_seconds = current_s
 
                 else:
@@ -208,5 +207,4 @@ def create_mp4(combined_audio_path: Path, output_path: Path, metadata_path: Path
     finally:
         pass
 
-# Backwards compatibility alias
 create_m4b = create_mp4
